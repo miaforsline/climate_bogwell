@@ -1,30 +1,406 @@
 ---
-title: "index"
+title: 'Marcell Experimental Forest: S2 Climate and Bogwell Data'
 author: "Mia Forsline"
-date: '2022-07-14'
-output: html_document
+date: '`r format(Sys.time(), "%B %d, %Y")`'
+output:
+  html_document:
+    theme: flatly
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+editor_options:
+  markdown:
+    wrap: 72
 ---
 
+# Set Up
+
+Install/load necessary R packages
+
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE, 
+                      warning = FALSE)
+
+#install packages if necessary, then load libraries
+if (!require(librarian)){
+  install.packages("librarian")
+  library(librarian)
+}
+
+librarian::shelf(
+  here, #for file paths 
+  janitor, 
+  plotly, #for creating interactive plots 
+  readxl, 
+  tidyverse,
+  zoo #for interpolating missing data points 
+  )
 ```
 
-## R Markdown
+Set date range
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+```{r min_max_year}
+min_year = 2017
+max_year = 2021
 ```
 
-## Including Plots
+Create sub-directories if necessary 
 
-You can also embed plots, for example:
+```{r directories}
+output_dir <- file.path(here("intermediate_data"))
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+if (!dir.exists(output_dir)){
+dir.create(output_dir)
+} else {
+    print("Directory already exists!")
+}
+
+output_dir <- file.path(here("figures"))
+
+if (!dir.exists(output_dir)){
+dir.create(output_dir)
+} else {
+    print("Directory already exists!")
+}
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+# Climate and Bogwell data
+
+# Precipitation 
+
+## Precipitation Every 15min
+
+-   Read in the data from the following Box file path:
+    `External-MEF_DATA/EDI/precipitation_15min/edi.849.2/data_objects/`
+
+-   Clean the data into a tidy format
+
+    -   Subset precipitation data to 2017 - present
+
+-   Plot
+
+```{r precip_15}
+#set file path to read in data from Box 
+filepath = "/Users/miaforsline/Library/CloudStorage/Box-Box/External-MEF_DATA/EDI/precipitation_15min/edi.849.2/data_objects/"
+
+#read in the raw data 
+precip_15 <- read_csv(here(filepath, "MEF_South_precip_15min.csv"))
+
+#clean the data 
+precip_15_clean <- precip_15 %>% 
+  clean_names() %>% 
+  mutate(year = format(as.POSIXct(timestamp, format = '%Y-%m-%d %H:%M:%S', 
+                                  tz = "GMT"), 
+                       format = '%Y'),
+         year = as.numeric(year)) %>% 
+  subset(year >= min_year) %>% 
+  rename(precip_in = south_pcp) %>% 
+  mutate(precip_10 = (precip_in / 10)) %>% 
+  pivot_longer(
+    cols = c("precip_in", "precip_10"),
+    names_to = "precip_type",
+    values_to = "precip_in"
+  ) %>% 
+  rename(datetime = timestamp)
+
+#save clean data CSV to use in future RMD files
+write.csv(x = precip_15_clean, 
+          file = file.path(here("intermediate_data", "precip_15_clean.csv")),
+          row.names = FALSE)
+
+#plot 
+p_15 <- ggplot(data = precip_15_clean) + 
+  geom_line(aes(x = datetime, y = precip_in, color = precip_type)) + 
+  theme_classic() + 
+  labs(x = "Time", 
+       y = "Precipitation (cm)", 
+       title = paste0("Precipitation Sum Every 15 Min (", min_year, "-", max_year, ")"))
+
+#static plot
+p_15
+
+#interactive plot 
+#ggplotly(p_15)
+```
+
+## Precipitation Every 6 Hours
+
+```{r precip_6h}
+#read in 15min precip data 
+precip_6h <- precip_15 
+
+#clean and sum precip by 6 hours 
+precip_6h_clean <- precip_6h %>% 
+  clean_names() %>% 
+  mutate(timestamp = lubridate::floor_date(timestamp, unit = "6 hours")) %>%
+    group_by(timestamp) %>%
+    dplyr::summarize(south_pcp = sum(south_pcp)) %>%
+    ungroup() %>% 
+  rename(datetime = timestamp,
+         precip_in = south_pcp) %>% 
+  mutate(
+    year = format(as.POSIXct(datetime, format = '%Y-%m-%d %H:%M:%S', 
+                                  tz = "GMT"), 
+                       format = '%Y'),
+         year = as.numeric(year),
+     date = format(as.POSIXct(datetime, format = '%Y-%m-%d %H:%M:%S', 
+                                  tz = "GMT"), 
+                       format = '%Y-%m-%d'),
+    precip_10_in = precip_in / 10
+  ) %>% 
+  subset(year >= min_year & year <= max_year)
+
+#save clean data CSV to use in future RMD files
+write.csv(x = precip_6h_clean, 
+          file = file.path(here("intermediate_data", "precip_6h_clean.csv")),
+          row.names = FALSE)
+
+#plot
+p_precip_6h <- ggplot(data = precip_6h_clean) + 
+  geom_col(aes(x = datetime, y = precip_in)) + 
+  theme_classic() + 
+  labs(x = "Time",
+       y = "Cumulative Precipitation (in)", 
+       title = paste0("Precipitation Sum Every 6 Hours (", min_year, "-", max_year, ")")) + 
+  theme(plot.title = element_text(hjust = 0.5),
+          plot.subtitle = element_text(hjust = 0.5))
+
+#static plot
+p_precip_6h
+
+#interactive plot
+#ggplotly(p_precip_6h)
+
+```
+
+
+
+## Precipitation Every 12 Hours
+
+```{r precip_12h}
+#read in 15min precip data 
+precip_12h <- precip_15 
+
+#clean and sum precip by 6 hours 
+precip_12h_clean <- precip_12h %>% 
+  clean_names() %>% 
+  mutate(timestamp = lubridate::floor_date(timestamp, unit = "12 hours")) %>%
+    group_by(timestamp) %>%
+    dplyr::summarize(south_pcp = sum(south_pcp)) %>%
+    ungroup() %>% 
+  rename(datetime = timestamp,
+         precip_in = south_pcp) %>% 
+  mutate(
+    year = format(as.POSIXct(datetime, format = '%Y-%m-%d %H:%M:%S', 
+                                  tz = "GMT"), 
+                       format = '%Y'),
+         year = as.numeric(year),
+    date = format(as.POSIXct(datetime, format = '%Y-%m-%d %H:%M:%S', 
+                                  tz = "GMT"), 
+                       format = '%Y-%m-%d'),
+    precip_10_in = precip_in / 10
+  ) %>% 
+  subset(year >= min_year & year <= max_year)
+
+#save clean data CSV to use in future RMD files
+write.csv(x = precip_12h_clean, 
+          file = file.path(here("intermediate_data", "precip_12h_clean.csv")),
+          row.names = FALSE)
+
+#plot
+p_precip_12h <- ggplot(data = precip_12h_clean) + 
+  geom_col(aes(x = datetime, y = precip_in)) + 
+  theme_classic() + 
+  labs(x = "Time",
+       y = "Cumulative Precipitation (in)", 
+       title = paste0("Precipitation Sum Every 12 Hours (", min_year, "-", max_year, ")")) + 
+  theme(plot.title = element_text(hjust = 0.5),
+          plot.subtitle = element_text(hjust = 0.5))
+
+#static plot 
+p_precip_12h
+
+#interactive plot
+#ggplotly(p_precip_12h)
+```
+
+
+## Precipitation Daily
+
+-   Read in the data from the following Box file path:
+    `External-MEF_DATA/EDI/precipitation_daily/edi.563.3/data_objects/`
+
+-   Clean the data into a tidy format
+
+    -   Subset precipitation data to 2017 - present
+
+-   Plot
+
+```{r precip_daily}
+#set file path to read in data from Box 
+filepath = "/Users/miaforsline/Library/CloudStorage/Box-Box/External-MEF_DATA/EDI/precipitation_daily/edi.563.3/data_objects/"
+
+#read in the raw data 
+precip_daily <- read_csv(here(filepath, "MEF_precipitation_daily.csv"))
+
+#clean the data 
+precip_daily_clean <- precip_daily %>% 
+  clean_names() %>% 
+  select(date, south_pcp, south_flag) %>% 
+  mutate(year = format(as.POSIXct(date, format = '%Y-%m-%d', 
+                                  tz = "GMT"), 
+                       format = '%Y'),
+         year = as.numeric(year)) %>% 
+  subset(year >= min_year) %>% 
+  rename(precip_in = south_pcp) %>% 
+  mutate(precip_10 = (precip_in / 10)) %>% 
+  pivot_longer(
+    cols = c("precip_in", "precip_10"),
+    names_to = "precip_type",
+    values_to = "precip_in"
+  )
+
+#save clean data CSV to use in future RMD files
+write.csv(x = precip_daily_clean, 
+          file = file.path(here("intermediate_data", "precip_daily_clean.csv")),
+          row.names = FALSE)
+
+#plot 
+p_daily <- ggplot(data = precip_daily_clean) + 
+  geom_line(aes(x = date, y = precip_in, color = precip_type)) + 
+  theme_classic() + 
+  labs(x = "Time", 
+       y = "South Precipitation (in)", 
+       title = paste0("Daily Cumulative Precipitation (", min_year, "-", max_year, ")")
+       )
+
+#static plot
+p_daily
+
+#ggplotly(p_daily)
+
+#Nina's code for calculating daily precip sums 
+# precipDaily <- precip15 %>%
+#   mutate(DATE = lubridate::floor_date(TIMESTAMP, unit = "day")) %>%
+#   group_by(DATE) %>%
+#   dplyr::summarize(South = sum(South)) %>%
+#   ungroup()
+```
+
+# Air Temperature Every 30 Min
+
+-   Read in the data from the following Box file path:
+    `External-MEF_DATA/EDI/airT_RH_BP_30min/edi.990.1/data_objects/`
+
+-   Clean the data into a tidy format
+
+    -   Subset precipitation data to 2017 - present
+
+-   Plot
+
+```{r airtemp_30}
+#set file path to read in data from Box 
+filepath = "/Users/miaforsline/Library/CloudStorage/Box-Box/External-MEF_DATA/EDI/airT_RH_BP_30min/edi.990.1/data_objects/"
+
+#read in the raw data 
+air_temp_30 <- read_csv(here(filepath, "MEF_S2Bog_Met_30min.csv"))
+
+#clean the data 
+air_temp_30_clean <- air_temp_30 %>% 
+  clean_names() %>% 
+  rename(airtempc = air_t,
+         rel_humidity = rh,
+         datetime = timestamp) %>% 
+  mutate(year = format(as.POSIXct(datetime, format = '%Y-%m-%d %H:%M:%S', 
+                                  tz = "GMT"), 
+                       format = '%Y'),
+         year = as.numeric(year),
+         airtempc_10 = (airtempc / 10),
+         airtempc_100 = (airtempc / 100),
+         #create a variable that indicates if the airtemp is above or below freezing
+         freezing = 0
+         ) %>% 
+  pivot_longer(
+    cols = c("airtempc", "airtempc_10", "airtempc_100"),
+    names_to = "airtemp_type",
+    values_to = "airtempC"
+  )
+
+#assign a value of 1 to the variable if airtemp is above freezing 
+air_temp_30_clean$freezing[air_temp_30_clean$airtempC > 0] <- 1
+
+#save clean data CSV to use in future RMD files
+write.csv(x = air_temp_30_clean, 
+          file = file.path(here("intermediate_data", "air_temp_30_clean.csv")),
+          row.names = FALSE)
+
+#plot 
+p_air_30 <- ggplot(data = air_temp_30_clean) + 
+  geom_line(aes(x = datetime, y = airtempC, color = airtemp_type)) + 
+  theme_classic() + 
+  labs(x = "Time", 
+       y = "Air Temperature (ºC)", 
+       title = paste0("Air Temperature Every 30 Min (", min_year, "-", max_year, ")") 
+       ) + 
+  theme(plot.title = element_text(hjust = 0.5),
+          plot.subtitle = element_text(hjust = 0.5))
+
+#static plot
+p_air_30
+
+#interactive plot
+#ggplotly(p_air_30)
+```
+
+# Peatland Daily Water Table
+
+-   Read in the data from the following Box file path:
+    `External-MEF_DATA/EDI/peatland_water_table_daily/edi.562.2/data_objects/`
+
+-   Clean the data into a tidy format
+
+    -   Subset precipitation data to 2017 - present
+
+-   Plot
+
+```{r bogwell_daily}
+#set file path to read in data from Box 
+filepath = "/Users/miaforsline/Library/CloudStorage/Box-Box/External-MEF_DATA/EDI/peatland_water_table_daily/edi.562.2/data_objects/"
+
+#read in the raw data 
+bogwell <- read_csv(here(filepath, "MEF_daily_peatland_water_table.csv"))
+
+#clean the data
+bogwell_clean <- bogwell %>% 
+  clean_names() %>% 
+  subset(peatland == "S2") %>% 
+  mutate(year = format(as.POSIXct(date, format = '%Y-%m-%d', 
+                                  tz = "GMT"), 
+                       format = '%Y'),
+         year = as.numeric(year)) %>% 
+  subset(year >= min_year & year <= max_year)
+
+#save clean data CSV to use in future RMD files
+write.csv(x = bogwell_clean, 
+          file = file.path(here("intermediate_data", "bogwell_clean.csv")),
+          row.names = FALSE)
+
+#plot
+p_bogwell <- ggplot(data = bogwell_clean) + 
+  geom_line(aes(x = date, y = wte)) + 
+  theme_classic() + 
+  labs(x = "Time", 
+       y = "Water Table Elevation (m above sea level)",
+       title = paste0("S2 Daily Peatland Water Table Elevation (", min_year, "-", max_year, ")") 
+       )
+
+#static plot 
+p_bogwell
+
+#interactive plot
+#ggplotly(p_bogwell)
+```
+
